@@ -7,11 +7,40 @@ const SCREEN_HEIGHT: i32 = 50;
 
 const LIMIT_FPS: i32 = 20; // 20 frames-per-second maximum
 
-struct Tcod {
-    root: Root,
+/// This is a generic object: the player, a monster, an item, the stairs...
+/// It's always represented by a character on screen.
+struct Object {
+    x: i32,
+    y: i32,
+    char: char,
+    color: Color,
 }
 
-fn handle_keys(tcod: &mut Tcod, player_x: &mut i32, player_y: &mut i32) -> bool {
+impl Object {
+    pub fn new(x: i32, y: i32, char: char, color: Color) -> Self {
+        Object { x, y, char, color }
+    }
+
+    /// move by the given amount
+    pub fn move_by(&mut self, dx: i32, dy: i32) {
+        self.x += dx;
+        self.y += dy;
+    }
+
+    /// set the color and then draw the character that represents this object at its position
+    pub fn draw(&self, con: &mut dyn Console) {
+        con.set_default_foreground(self.color);
+        con.put_char(self.x, self.y, self.char, BackgroundFlag::None);
+    }
+}
+
+// NOTE: Game code
+struct Tcod {
+    root: Root,
+    con: Offscreen,
+}
+
+fn handle_keys(tcod: &mut Tcod, player: &mut Object) -> bool {
     use tcod::input::Key;
     use tcod::input::KeyCode::*;
 
@@ -29,10 +58,10 @@ fn handle_keys(tcod: &mut Tcod, player_x: &mut i32, player_y: &mut i32) -> bool 
         Key { code: Escape, .. } => return true, // exit game
 
         // movement keys
-        Key { code: Up, .. } => *player_y -= 1,
-        Key { code: Down, .. } => *player_y += 1,
-        Key { code: Left, .. } => *player_x -= 1,
-        Key { code: Right, .. } => *player_x += 1,
+        Key { code: Up, .. } => player.move_by(0, -1),
+        Key { code: Down, .. } => player.move_by(0, 1),
+        Key { code: Left, .. } => player.move_by(-1, 0),
+        Key { code: Right, .. } => player.move_by(1, 0),
 
         _ => {}
     }
@@ -41,30 +70,51 @@ fn handle_keys(tcod: &mut Tcod, player_x: &mut i32, player_y: &mut i32) -> bool 
 }
 
 fn main() {
+    tcod::system::set_fps(LIMIT_FPS);
+
     let root = Root::initializer()
         .font("arial10x10.png", FontLayout::Tcod)
         .font_type(FontType::Greyscale)
         .size(SCREEN_WIDTH, SCREEN_HEIGHT)
-        .title("Rust Roguelike")
+        .title("Rust/libtcod tutorial")
         .init();
 
-    let mut tcod = Tcod { root };
+    let con = Offscreen::new(SCREEN_WIDTH, SCREEN_HEIGHT);
 
-    tcod::system::set_fps(LIMIT_FPS);
+    let mut tcod = Tcod { root, con };
 
-    let mut player_x = SCREEN_WIDTH / 2;
-    let mut player_y = SCREEN_HEIGHT / 2;
+    // create object representing the player
+    let player = Object::new(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, '@', WHITE);
+
+    // create an NPC
+    let npc = Object::new(SCREEN_WIDTH / 2 - 5, SCREEN_HEIGHT / 2, '@', YELLOW);
+
+    // the list of objects with those two
+    let mut objects = [player, npc];
 
     while !tcod.root.window_closed() {
-        tcod.root.set_default_foreground(WHITE);
-        tcod.root.clear();
-        tcod.root
-            .put_char(player_x, player_y, '@', BackgroundFlag::None);
+        // clear the screen of the previous frame
+        tcod.con.clear();
+
+        for object in &objects {
+            object.draw(&mut tcod.con);
+        }
+
+        // blit the contents of "con" to the root console and present it
+        blit(
+            &tcod.con,
+            (0, 0),
+            (SCREEN_WIDTH, SCREEN_HEIGHT),
+            &mut tcod.root,
+            (0, 0),
+            1.0,
+            1.0,
+        );
         tcod.root.flush();
-        tcod.root.wait_for_keypress(true);
 
         // handle keys and exit game if needed
-        let exit = handle_keys(&mut tcod, &mut player_x, &mut player_y);
+        let player = &mut objects[0];
+        let exit = handle_keys(&mut tcod, player);
         if exit {
             break;
         }
