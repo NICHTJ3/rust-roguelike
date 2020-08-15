@@ -1,5 +1,5 @@
+use crate::constants::colors::*;
 use serde::{Deserialize, Serialize};
-use tcod::colors::*;
 
 #[derive(Serialize, Deserialize)]
 pub struct Messages {

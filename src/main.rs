@@ -1,28 +1,42 @@
 use std::cmp;
 
 mod components;
-use components::ai::Ai;
+use components::{ai::*, fighter::Fighter};
+
+mod constants;
+use constants::{colors::*, PLAYER};
+
+mod death_callback;
+use death_callback::*;
+
+mod equipment;
+use equipment::{Equipment, Slot};
+
+mod game;
+use game::{FontLayout, FontType, FovMap, Game, Map, Offscreen, PlayerAction, Root, Tcod};
+
 mod messages;
 use messages::Messages;
+
+mod object;
+use object::{Item, Object};
+
 mod rect;
 use rect::Rect;
+
 mod tile;
 use tile::Tile;
-mod object;
-use object::Object;
 
-mod enums;
+mod stuff;
+use stuff::*;
 
 use rand::Rng;
 use std::error::Error;
 use std::fs::File;
 use std::io::{Read, Write};
-use tcod::colors::*;
 use tcod::console::*;
 use tcod::input::{self, Event, Key, Mouse};
-use tcod::map::{FovAlgorithm, Map as FovMap};
-
-use serde::{Deserialize, Serialize};
+use tcod::map::FovAlgorithm;
 
 // actual size of the window
 const SCREEN_WIDTH: i32 = 80;
@@ -66,79 +80,6 @@ const TORCH_RADIUS: i32 = 10;
 
 const LIMIT_FPS: i32 = 20; // 20 frames-per-second maximum
 
-const COLOR_DARK_WALL: Color = Color { r: 0, g: 0, b: 100 };
-const COLOR_LIGHT_WALL: Color = Color {
-    r: 130,
-    g: 110,
-    b: 50,
-};
-const COLOR_DARK_GROUND: Color = Color {
-    r: 50,
-    g: 50,
-    b: 150,
-};
-const COLOR_LIGHT_GROUND: Color = Color {
-    r: 200,
-    g: 180,
-    b: 50,
-};
-
-// player will always be the first object
-const PLAYER: usize = 0;
-
-struct Tcod {
-    root: Root,
-    con: Offscreen,
-    panel: Offscreen,
-    fov: FovMap,
-    key: Key,
-    mouse: Mouse,
-}
-
-type Map = Vec<Vec<Tile>>;
-
-#[derive(Serialize, Deserialize)]
-struct Game {
-    map: Map,
-    messages: Messages,
-    inventory: Vec<Object>,
-    dungeon_level: u32,
-}
-
-/// move by the given amount, if the destination is not blocked
-fn move_by(id: usize, dx: i32, dy: i32, map: &Map, objects: &mut [Object]) {
-    let (x, y) = objects[id].pos();
-    if !is_blocked(x + dx, y + dy, map, objects) {
-        objects[id].set_pos(x + dx, y + dy);
-    }
-}
-
-fn move_towards(id: usize, target_x: i32, target_y: i32, map: &Map, objects: &mut [Object]) {
-    // vector from this object to the target, and distance
-    let dx = target_x - objects[id].x;
-    let dy = target_y - objects[id].y;
-    let distance = ((dx.pow(2) + dy.pow(2)) as f32).sqrt();
-
-    // normalize it to length 1 (preserving direction), then round it and
-    // convert to integer so the movement is restricted to the map grid
-    let dx = (dx as f32 / distance).round() as i32;
-    let dy = (dy as f32 / distance).round() as i32;
-    move_by(id, dx, dy, map, objects);
-}
-
-/// Mutably borrow two *separate* elements from the given slice.
-/// Panics when the indexes are equal or out of bounds.
-fn mut_two<T>(first_index: usize, second_index: usize, items: &mut [T]) -> (&mut T, &mut T) {
-    assert!(first_index != second_index);
-    let split_at_index = cmp::max(first_index, second_index);
-    let (first_slice, second_slice) = items.split_at_mut(split_at_index);
-    if first_index < second_index {
-        (&mut first_slice[first_index], &mut second_slice[0])
-    } else {
-        (&mut second_slice[0], &mut first_slice[second_index])
-    }
-}
-
 /// add to the player's inventory and remove from the map
 fn pick_item_up(object_id: usize, game: &mut Game, objects: &mut Vec<Object>) {
     if game.inventory.len() >= 26 {
@@ -179,98 +120,6 @@ fn get_equipped_in_slot(slot: Slot, inventory: &[Object]) -> Option<usize> {
     None
 }
 
-fn is_blocked(x: i32, y: i32, map: &Map, objects: &[Object]) -> bool {
-    // first test the map tile
-    if map[x as usize][y as usize].blocked {
-        return true;
-    }
-    // now check for any blocking objects
-    objects
-        .iter()
-        .any(|object| object.blocks && object.pos() == (x, y))
-}
-
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-enum DeathCallback {
-    Player,
-    Monster,
-}
-
-impl DeathCallback {
-    fn callback(self, object: &mut Object, game: &mut Game) {
-        use DeathCallback::*;
-        let callback = match self {
-            Player => player_death,
-            Monster => monster_death,
-        };
-        callback(object, game);
-    }
-}
-
-fn ai_take_turn(monster_id: usize, tcod: &Tcod, game: &mut Game, objects: &mut [Object]) {
-    use ai::Ai::*;
-    if let Some(ai) = objects[monster_id].ai.take() {
-        let new_ai = match ai {
-            Basic => ai_basic(monster_id, tcod, game, objects),
-            Confused {
-                previous_ai,
-                num_turns,
-            } => ai_confused(monster_id, tcod, game, objects, previous_ai, num_turns),
-        };
-        objects[monster_id].ai = Some(new_ai);
-    }
-}
-
-fn ai_basic(monster_id: usize, tcod: &Tcod, game: &mut Game, objects: &mut [Object]) -> Ai {
-    // a basic monster takes its turn. If you can see it, it can see you
-    let (monster_x, monster_y) = objects[monster_id].pos();
-    if tcod.fov.is_in_fov(monster_x, monster_y) {
-        if objects[monster_id].distance_to(&objects[PLAYER]) >= 2.0 {
-            // move towards player if far away
-            let (player_x, player_y) = objects[PLAYER].pos();
-            move_towards(monster_id, player_x, player_y, &game.map, objects);
-        } else if objects[PLAYER].fighter.map_or(false, |f| f.hp > 0) {
-            // close enough, attack! (if the player is still alive.)
-            let (monster, player) = mut_two(monster_id, PLAYER, objects);
-            monster.attack(player, game);
-        }
-    }
-    Ai::Basic
-}
-
-fn ai_confused(
-    monster_id: usize,
-    _tcod: &Tcod,
-    game: &mut Game,
-    objects: &mut [Object],
-    previous_ai: Box<Ai>,
-    num_turns: i32,
-) -> Ai {
-    if num_turns >= 0 {
-        // still confused ...
-        // move in a random direction, and decrease the number of turns confused
-        move_by(
-            monster_id,
-            rand::thread_rng().gen_range(-1, 2),
-            rand::thread_rng().gen_range(-1, 2),
-            &game.map,
-            objects,
-        );
-        Ai::Confused {
-            previous_ai,
-            num_turns: num_turns - 1,
-        }
-    } else {
-        // restore the previous AI (this one will be deleted)
-        game.messages.add(
-            format!("The {} is no longer confused!", objects[monster_id].name),
-            RED,
-        );
-        *previous_ai
-    }
-}
-
 enum UseResult {
     UsedUp,
     UsedAndKept,
@@ -278,7 +127,7 @@ enum UseResult {
 }
 
 fn use_item(inventory_id: usize, tcod: &mut Tcod, game: &mut Game, objects: &mut [Object]) {
-    use emums::Item::*;
+    use Item::*;
     // just call the "use_function" if it is defined
     if let Some(item) = game.inventory[inventory_id].item {
         let on_use = match item {
@@ -553,23 +402,6 @@ fn toggle_equipment(
         game.inventory[inventory_id].equip(&mut game.messages);
     }
     UseResult::UsedAndKept
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-/// An object that can be equipped, yielding bonuses.
-struct Equipment {
-    slot: Slot,
-    equipped: bool,
-    max_hp_bonus: i32,
-    defense_bonus: i32,
-    power_bonus: i32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-enum Slot {
-    LeftHand,
-    RightHand,
-    Head,
 }
 
 impl std::fmt::Display for Slot {
@@ -1411,41 +1243,6 @@ fn level_up(tcod: &mut Tcod, game: &mut Game, objects: &mut [Object]) {
             _ => unreachable!(),
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum PlayerAction {
-    TookTurn,
-    DidntTakeTurn,
-    Exit,
-}
-
-fn player_death(player: &mut Object, game: &mut Game) {
-    // the game ended!
-    game.messages.add("You died!", RED);
-
-    // for added effect, transform the player into a corpse!
-    player.char = '%';
-    player.color = DARK_RED;
-}
-
-fn monster_death(monster: &mut Object, game: &mut Game) {
-    // transform it into a nasty corpse! it doesn't block, can't be
-    // attacked and doesn't move
-    game.messages.add(
-        format!(
-            "{} is dead! You gain {} experience points.",
-            monster.name,
-            monster.fighter.unwrap().xp
-        ),
-        ORANGE,
-    );
-    monster.char = '%';
-    monster.color = DARK_RED;
-    monster.blocks = false;
-    monster.fighter = None;
-    monster.ai = None;
-    monster.name = format!("remains of {}", monster.name);
 }
 
 fn new_game(tcod: &mut Tcod) -> (Game, Vec<Object>) {

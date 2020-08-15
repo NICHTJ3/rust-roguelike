@@ -1,25 +1,40 @@
-use crate::components::ai::Ai;
-use crate::enums::item::Item;
+use crate::{
+    components::{ai::Ai, fighter::Fighter},
+    constants::colors::*,
+    equipment::Equipment,
+    game::Game,
+    messages::Messages,
+};
 use serde::{Deserialize, Serialize};
-use tcod::colors::*;
+use tcod::console::*;
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Item {
+    Heal,
+    Lightning,
+    Confuse,
+    Fireball,
+    Sword,
+    Shield,
+}
 
 /// This is a generic object: the player, a monster, an item, the stairs...
 /// It's always represented by a character on screen.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Object {
-    x: i32,
-    y: i32,
-    char: char,
-    color: Color,
-    name: String,
-    blocks: bool,
-    alive: bool,
-    fighter: Option<Fighter>,
-    ai: Option<Ai>,
-    item: Option<Item>,
-    equipment: Option<Equipment>,
-    always_visible: bool,
-    level: i32,
+    pub x: i32,
+    pub y: i32,
+    pub char: char,
+    pub color: Color,
+    pub name: String,
+    pub blocks: bool,
+    pub alive: bool,
+    pub fighter: Option<Fighter>,
+    pub ai: Option<Ai>,
+    pub item: Option<Item>,
+    pub equipment: Option<Equipment>,
+    pub always_visible: bool,
+    pub level: i32,
 }
 
 impl Object {
