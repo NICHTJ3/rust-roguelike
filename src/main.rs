@@ -4,7 +4,10 @@ mod components;
 use components::{ai::*, fighter::Fighter};
 
 mod constants;
-use constants::{colors::*, PLAYER};
+use constants::{
+    colors::*, dungeon::*, game_play::*, spells::*, ui::*, LIMIT_FPS, MAP_HEIGHT, MAP_WIDTH,
+    PLAYER, SCREEN_HEIGHT, SCREEN_WIDTH,
+};
 
 mod death_callback;
 use death_callback::*;
@@ -36,49 +39,6 @@ use std::fs::File;
 use std::io::{Read, Write};
 use tcod::console::*;
 use tcod::input::{self, Event, Key, Mouse};
-use tcod::map::FovAlgorithm;
-
-// actual size of the window
-const SCREEN_WIDTH: i32 = 80;
-const SCREEN_HEIGHT: i32 = 50;
-
-// size of the map
-const MAP_WIDTH: i32 = 80;
-const MAP_HEIGHT: i32 = 43;
-
-// sizes and coordinates relevant for the GUI
-const BAR_WIDTH: i32 = 20;
-const PANEL_HEIGHT: i32 = 7;
-const PANEL_Y: i32 = SCREEN_HEIGHT - PANEL_HEIGHT;
-const MSG_X: i32 = BAR_WIDTH + 2;
-const MSG_WIDTH: i32 = SCREEN_WIDTH - BAR_WIDTH - 2;
-const MSG_HEIGHT: usize = PANEL_HEIGHT as usize - 1;
-const INVENTORY_WIDTH: i32 = 50;
-const CHARACTER_SCREEN_WIDTH: i32 = 30;
-const LEVEL_SCREEN_WIDTH: i32 = 40;
-
-//parameters for dungeon generator
-const ROOM_MAX_SIZE: i32 = 10;
-const ROOM_MIN_SIZE: i32 = 6;
-const MAX_ROOMS: i32 = 30;
-
-const HEAL_AMOUNT: i32 = 40;
-const LIGHTNING_DAMAGE: i32 = 40;
-const LIGHTNING_RANGE: i32 = 5;
-const CONFUSE_RANGE: i32 = 8;
-const CONFUSE_NUM_TURNS: i32 = 10;
-const FIREBALL_RADIUS: i32 = 3;
-const FIREBALL_DAMAGE: i32 = 25;
-
-// experience and level-ups
-const LEVEL_UP_BASE: i32 = 200;
-const LEVEL_UP_FACTOR: i32 = 150;
-
-const FOV_ALGO: FovAlgorithm = FovAlgorithm::Basic; // default FOV algorithm
-const FOV_LIGHT_WALLS: bool = true; // light walls or not
-const TORCH_RADIUS: i32 = 10;
-
-const LIMIT_FPS: i32 = 20; // 20 frames-per-second maximum
 
 /// add to the player's inventory and remove from the map
 fn pick_item_up(object_id: usize, game: &mut Game, objects: &mut Vec<Object>) {
