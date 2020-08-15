@@ -18,6 +18,12 @@ pub enum Item {
     Shield,
 }
 
+pub enum UseResult {
+    UsedUp,
+    UsedAndKept,
+    Cancelled,
+}
+
 /// This is a generic object: the player, a monster, an item, the stairs...
 /// It's always represented by a character on screen.
 #[derive(Debug, Serialize, Deserialize)]
