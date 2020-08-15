@@ -1,5 +1,18 @@
 use std::cmp;
 
+mod components;
+use components::ai::Ai;
+mod messages;
+use messages::Messages;
+mod rect;
+use rect::Rect;
+mod tile;
+use tile::Tile;
+mod object;
+use object::Object;
+
+mod enums;
+
 use rand::Rng;
 use std::error::Error;
 use std::fs::File;
@@ -8,10 +21,6 @@ use tcod::colors::*;
 use tcod::console::*;
 use tcod::input::{self, Event, Key, Mouse};
 use tcod::map::{FovAlgorithm, Map as FovMap};
-
-mod messages;
-mod rect;
-mod tile;
 
 use serde::{Deserialize, Serialize};
 
@@ -86,229 +95,14 @@ struct Tcod {
     mouse: Mouse,
 }
 
-type Map = Vec<Vec<tile::Tile>>;
+type Map = Vec<Vec<Tile>>;
 
 #[derive(Serialize, Deserialize)]
 struct Game {
     map: Map,
-    messages: messages::Messages,
+    messages: Messages,
     inventory: Vec<Object>,
     dungeon_level: u32,
-}
-
-/// This is a generic object: the player, a monster, an item, the stairs...
-/// It's always represented by a character on screen.
-#[derive(Debug, Serialize, Deserialize)]
-struct Object {
-    x: i32,
-    y: i32,
-    char: char,
-    color: Color,
-    name: String,
-    blocks: bool,
-    alive: bool,
-    fighter: Option<Fighter>,
-    ai: Option<Ai>,
-    item: Option<Item>,
-    equipment: Option<Equipment>,
-    always_visible: bool,
-    level: i32,
-}
-
-impl Object {
-    pub fn new(x: i32, y: i32, char: char, name: &str, color: Color, blocks: bool) -> Self {
-        Object {
-            x,
-            y,
-            char,
-            color,
-            name: name.into(),
-            blocks,
-            alive: false,
-            fighter: None,
-            ai: None,
-            item: None,
-            equipment: None,
-            always_visible: false,
-            level: 1,
-        }
-    }
-
-    /// set the color and then draw the character that represents this object at its position
-    pub fn draw(&self, con: &mut dyn Console) {
-        con.set_default_foreground(self.color);
-        con.put_char(self.x, self.y, self.char, BackgroundFlag::None);
-    }
-
-    pub fn pos(&self) -> (i32, i32) {
-        (self.x, self.y)
-    }
-
-    pub fn set_pos(&mut self, x: i32, y: i32) {
-        self.x = x;
-        self.y = y;
-    }
-
-    /// return the distance to another object
-    pub fn distance_to(&self, other: &Object) -> f32 {
-        let dx = other.x - self.x;
-        let dy = other.y - self.y;
-        ((dx.pow(2) + dy.pow(2)) as f32).sqrt()
-    }
-
-    /// return the distance to some coordinates
-    pub fn distance(&self, x: i32, y: i32) -> f32 {
-        (((x - self.x).pow(2) + (y - self.y).pow(2)) as f32).sqrt()
-    }
-
-    pub fn take_damage(&mut self, damage: i32, game: &mut Game) -> Option<i32> {
-        // apply damage if possible
-        if let Some(fighter) = self.fighter.as_mut() {
-            if damage > 0 {
-                fighter.hp -= damage;
-            }
-        }
-        // check for death, call the death function
-        if let Some(fighter) = self.fighter {
-            if fighter.hp <= 0 {
-                self.alive = false;
-                fighter.on_death.callback(self, game);
-                return Some(fighter.xp);
-            }
-        }
-        None
-    }
-
-    pub fn attack(&mut self, target: &mut Object, game: &mut Game) {
-        // a simple formula for attack damage
-        let damage = self.power(game) - target.defense(game);
-        if damage > 0 {
-            // make the target take some damage
-            game.messages.add(
-                format!(
-                    "{} attacks {} for {} hit points.",
-                    self.name, target.name, damage
-                ),
-                WHITE,
-            );
-            if let Some(xp) = target.take_damage(damage, game) {
-                // yield experience to the player
-                self.fighter.as_mut().unwrap().xp += xp;
-            }
-        } else {
-            game.messages.add(
-                format!(
-                    "{} attacks {} but it has no effect!",
-                    self.name, target.name
-                ),
-                WHITE,
-            );
-        }
-    }
-
-    /// heal by the given amount, without going over the maximum
-    pub fn heal(&mut self, amount: i32, game: &Game) {
-        let max_hp = self.max_hp(game);
-        if let Some(ref mut fighter) = self.fighter {
-            fighter.hp += amount;
-            if fighter.hp > max_hp {
-                fighter.hp = max_hp;
-            }
-        }
-    }
-
-    /// Equip object and show a message about it
-    pub fn equip(&mut self, messages: &mut messages::Messages) {
-        if self.item.is_none() {
-            messages.add(
-                format!("Can't equip {:?} because it's not an Item.", self),
-                RED,
-            );
-            return;
-        };
-        if let Some(ref mut equipment) = self.equipment {
-            if !equipment.equipped {
-                equipment.equipped = true;
-                messages.add(
-                    format!("Equipped {} on {}.", self.name, equipment.slot),
-                    LIGHT_GREEN,
-                );
-            }
-        } else {
-            messages.add(
-                format!("Can't equip {:?} because it's not an Equipment.", self),
-                RED,
-            );
-        }
-    }
-
-    /// Dequip object and show a message about it
-    pub fn dequip(&mut self, messages: &mut messages::Messages) {
-        if self.item.is_none() {
-            messages.add(
-                format!("Can't dequip {:?} because it's not an Item.", self),
-                RED,
-            );
-            return;
-        };
-        if let Some(ref mut equipment) = self.equipment {
-            if equipment.equipped {
-                equipment.equipped = false;
-                messages.add(
-                    format!("Dequipped {} from {}.", self.name, equipment.slot),
-                    LIGHT_YELLOW,
-                );
-            }
-        } else {
-            messages.add(
-                format!("Can't dequip {:?} because it's not an Equipment.", self),
-                RED,
-            );
-        }
-    }
-
-    pub fn power(&self, game: &Game) -> i32 {
-        let base_power = self.fighter.map_or(0, |f| f.base_power);
-        let bonus: i32 = self
-            .get_all_equipped(game)
-            .iter()
-            .map(|e| e.power_bonus)
-            .sum();
-        base_power + bonus
-    }
-
-    pub fn defense(&self, game: &Game) -> i32 {
-        let base_defense = self.fighter.map_or(0, |f| f.base_defense);
-        let bonus: i32 = self
-            .get_all_equipped(game)
-            .iter()
-            .map(|e| e.defense_bonus)
-            .sum();
-        base_defense + bonus
-    }
-
-    pub fn max_hp(&self, game: &Game) -> i32 {
-        let base_max_hp = self.fighter.map_or(0, |f| f.base_max_hp);
-        let bonus: i32 = self
-            .get_all_equipped(game)
-            .iter()
-            .map(|e| e.max_hp_bonus)
-            .sum();
-        base_max_hp + bonus
-    }
-
-    /// returns a list of equipped items
-    pub fn get_all_equipped(&self, game: &Game) -> Vec<Equipment> {
-        if self.name == "player" {
-            game.inventory
-                .iter()
-                .filter(|item| item.equipment.map_or(false, |e| e.equipped))
-                .map(|item| item.equipment.unwrap())
-                .collect()
-        } else {
-            vec![] // other objects have no equipment
-        }
-    }
 }
 
 /// move by the given amount, if the destination is not blocked
@@ -396,16 +190,6 @@ fn is_blocked(x: i32, y: i32, map: &Map, objects: &[Object]) -> bool {
         .any(|object| object.blocks && object.pos() == (x, y))
 }
 
-// combat-related properties and methods (monster, player, NPC).
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-struct Fighter {
-    hp: i32,
-    base_max_hp: i32,
-    base_defense: i32,
-    base_power: i32,
-    xp: i32,
-    on_death: DeathCallback,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 enum DeathCallback {
@@ -424,17 +208,8 @@ impl DeathCallback {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-enum Ai {
-    Basic,
-    Confused {
-        previous_ai: Box<Ai>,
-        num_turns: i32,
-    },
-}
-
 fn ai_take_turn(monster_id: usize, tcod: &Tcod, game: &mut Game, objects: &mut [Object]) {
-    use Ai::*;
+    use ai::Ai::*;
     if let Some(ai) = objects[monster_id].ai.take() {
         let new_ai = match ai {
             Basic => ai_basic(monster_id, tcod, game, objects),
@@ -496,16 +271,6 @@ fn ai_confused(
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-enum Item {
-    Heal,
-    Lightning,
-    Confuse,
-    Fireball,
-    Sword,
-    Shield,
-}
-
 enum UseResult {
     UsedUp,
     UsedAndKept,
@@ -513,7 +278,7 @@ enum UseResult {
 }
 
 fn use_item(inventory_id: usize, tcod: &mut Tcod, game: &mut Game, objects: &mut [Object]) {
-    use Item::*;
+    use emums::Item::*;
     // just call the "use_function" if it is defined
     if let Some(item) = game.inventory[inventory_id].item {
         let on_use = match item {
@@ -817,11 +582,11 @@ impl std::fmt::Display for Slot {
     }
 }
 
-fn create_room(room: rect::Rect, map: &mut Map) {
+fn create_room(room: Rect, map: &mut Map) {
     // go through the tiles in the rectangle and make them passable
     for x in (room.x1 + 1)..room.x2 {
         for y in (room.y1 + 1)..room.y2 {
-            map[x as usize][y as usize] = tile::Tile::empty();
+            map[x as usize][y as usize] = Tile::empty();
         }
     }
 }
@@ -829,20 +594,20 @@ fn create_room(room: rect::Rect, map: &mut Map) {
 fn create_h_tunnel(x1: i32, x2: i32, y: i32, map: &mut Map) {
     // horizontal tunnel. `min()` and `max()` are used in case `x1 > x2`
     for x in cmp::min(x1, x2)..(cmp::max(x1, x2) + 1) {
-        map[x as usize][y as usize] = tile::Tile::empty();
+        map[x as usize][y as usize] = Tile::empty();
     }
 }
 
 fn create_v_tunnel(y1: i32, y2: i32, x: i32, map: &mut Map) {
     // vertical tunnel
     for y in cmp::min(y1, y2)..(cmp::max(y1, y2) + 1) {
-        map[x as usize][y as usize] = tile::Tile::empty();
+        map[x as usize][y as usize] = Tile::empty();
     }
 }
 
 fn make_map(objects: &mut Vec<Object>, level: u32) -> Map {
     // fill map with "blocked" tiles
-    let mut map = vec![vec![tile::Tile::wall(); MAP_HEIGHT as usize]; MAP_WIDTH as usize];
+    let mut map = vec![vec![Tile::wall(); MAP_HEIGHT as usize]; MAP_WIDTH as usize];
 
     // Player is the first element, remove everything else.
     // NOTE: works only when the player is the first object!
@@ -859,7 +624,7 @@ fn make_map(objects: &mut Vec<Object>, level: u32) -> Map {
         let x = rand::thread_rng().gen_range(0, MAP_WIDTH - w);
         let y = rand::thread_rng().gen_range(0, MAP_HEIGHT - h);
 
-        let new_room = rect::Rect::new(x, y, w, h);
+        let new_room = Rect::new(x, y, w, h);
 
         // run through the other rooms and see if they intersect with this one
         let failed = rooms
@@ -929,7 +694,7 @@ fn from_dungeon_level(table: &[Transition], level: u32) -> u32 {
         .map_or(0, |transition| transition.value)
 }
 
-fn place_objects(room: rect::Rect, map: &Map, objects: &mut Vec<Object>, level: u32) {
+fn place_objects(room: Rect, map: &Map, objects: &mut Vec<Object>, level: u32) {
     use rand::distributions::{IndependentSample, Weighted, WeightedChoice};
 
     // maximum number of monsters per room
@@ -1702,7 +1467,7 @@ fn new_game(tcod: &mut Tcod) -> (Game, Vec<Object>) {
     let mut game = Game {
         // generate map (at this point it's not drawn to the screen)
         map: make_map(&mut objects, 1),
-        messages: messages::Messages::new(),
+        messages: Messages::new(),
         inventory: vec![],
         dungeon_level: 1,
     };
