@@ -1,6 +1,7 @@
 use crate::{
     constants::{MAP_HEIGHT, MAP_WIDTH, PLAYER},
-    game::{render_all, FovMap, Game, Map, Tcod},
+    dungeon::Map,
+    game::{render_all, FovMap, Game, Tcod},
     object::Object,
 };
 use std::cmp;

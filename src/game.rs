@@ -1,16 +1,14 @@
 use crate::{
     constants::{colors::*, game_play::*, ui::*, MAP_HEIGHT, MAP_WIDTH, PLAYER, SCREEN_WIDTH},
+    dungeon::Map,
     messages::Messages,
     object::Object,
     stuff::*,
-    tile::Tile,
 };
 use serde::{Deserialize, Serialize};
 pub use tcod::console::*;
 use tcod::input::{Key, Mouse};
 pub use tcod::map::Map as FovMap;
-
-pub type Map = Vec<Vec<Tile>>;
 
 pub struct Tcod {
     pub root: Root,
